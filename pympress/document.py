@@ -39,6 +39,7 @@ import poppler
 import pympress.ui
 import pympress.util
 
+from pympress.ui import PDF_REGULAR, PDF_CONTENT_PAGE, PDF_NOTES_PAGE
 
 class Link:
     """This class encapsulates one hyperlink of the document."""
@@ -97,7 +98,7 @@ class Link:
 class Page:
     """
     Class representing a single page.
-    
+
     It provides several methods used by the GUI for preparing windows for
     displaying pages, managing hyperlinks, etc.
 
@@ -166,65 +167,72 @@ class Page:
         """
         xx = self.pw * x
         yy = self.ph * (1. - y)
-        
+
         for link in self.links:
             if link.is_over(xx, yy):
                 return link
 
         return None
 
-    def get_size(self, type=0):
+    def get_size(self, type=PDF_REGULAR):
         """Get the page size.
 
+        :param type: the type of document to consider
+        :type  type: integer
         :return: page size
         :rtype: (float, float)
         """
-        if type==0 :
+        if type == PDF_REGULAR:
             return (self.pw, self.ph)
-        else :
-            return (self.pw*0.5, self.ph)
+        else:
+            return (self.pw/2., self.ph)
 
-    def get_aspect_ratio(self, type=0):
+    def get_aspect_ratio(self, type=PDF_REGULAR):
         """Get the page aspect ratio.
 
+        :param type: the type of document to consider
+        :type  type: integer
         :return: page aspect ratio
         :rtype: float
         """
-        if type==0 :
+        if type == PDF_REGULAR:
             return self.pw / self.ph
-        else :
-            return (self.pw*0.5) / self.ph
+        else:
+            return (self.pw/2.) / self.ph
 
-    ##== this method should be abandoned since it cannot render a page by
-    ##== specifying pixel ranges.
-    def render_cairo(self, cr):
+    def render_cairo(self, cr, ww, wh, type=PDF_REGULAR):
         """Render the page on a Cairo surface.
 
         :param cr: target surface
         :type  cr: :class:`gtk.gdk.CairoContext`
-        """
-        self.page.render(cr)
-
-    def render_pixbuf(self, pixbuf, width, height, scale, type=0):
-        """Render the page on a :class:`gtk.gdk.Pixbuf`.
-        
-        :param pixbuf: target pixbuf
-        :type  pixbuf: :class:`gtk.gdk.Pixbuf`
-        :param width: pixbuf width
-        :type  width: integer
-        :param height: pixbuf height
-        :type  height: integer
-        :param scale: scaling factor
-        :type  scale: float
-        :param type: page type (0-without notes; 1-left half; 2-right half)
+        :param ww: target width in pixels
+        :type  ww: integer
+        :param wh: target height in pixels
+        :type  wh: integer
+        :param type: the type of document that should be rendered
         :type  type: integer
         """
-        if type==0 or type==1 :
-            self.page.render_to_pixbuf(0, 0, width, height, scale, 0, pixbuf)
-        else :
-            self.page.render_to_pixbuf(width, 0, width, height, scale, 0, pixbuf)
 
+        pw, ph = self.get_size(type)
 
+        cr.set_source_rgb(1, 1, 1)
+
+        # Scale
+        scale = min(ww/pw, wh/ph)
+        cr.scale(scale, scale)
+
+        cr.rectangle(0, 0, pw, ph)
+        cr.fill()
+
+        # For "regular" pages, there is no problem: just render them.
+        # For "content" or "notes" pages (i.e. left or right half of a page),
+        # the widget already has correct dimensions so we don't need to deal
+        # with that. But for right halfs we must translate the output in order
+        # to only show the right half.
+        if type == PDF_NOTES_PAGE:
+            cr.translate(-pw, 0)
+
+        self.page.render(cr)
 
 
 class Document:
@@ -240,14 +248,14 @@ class Document:
     nb_pages = -1
     #: Number of the current page
     cur_page = -1
+    #: Document with notes or not
+    notes = False
     #: Pages cache (dictionary of :class:`pympress.document.Page`). This makes
     #: navigation in the document faster by avoiding calls to Poppler when loading
     #: a page that has already been loaded.
     pages_cache = {}
     #: Instance of :class:`pympress.ui.UI` used when opening a document
     ui = None
-    #: Document mode with notes or not
-    note_mode = 0
 
     def __init__(self, uri, page=0):
         """
@@ -274,51 +282,31 @@ class Document:
         # Pages cache
         self.pages_cache = {}
 
-        # Detect note mode
-        self.note_mode = self.detect_mode(page)
-        #print "note_mode = %d" % self.note_mode
+        # Guess if the document has notes
+        page0 = self.page(page)
+        if page0 is not None:
+            # "Regular" pages will have an apsect ratio of 4/3, 16/9, 16/10...
+            # Full A4 pages will have an aspect ratio < 1.
+            # So if the aspect ratio is >= 2, we can assume it is a document with notes.
+            ar = page0.get_aspect_ratio()
+            self.notes = (ar >= 2)
 
         # Create windows
         self.ui = pympress.ui.UI(self)
         self.ui.on_page_change(False)
         self.ui.run()
 
-    def detect_mode(self, page=0):
-        """Detect document mode -- whether it is in note mode or not
-
-        :param page: page number
-        :type  page: integer
-        :return: mode type, 0-without notes, 1-with notes
-        :rtye: integer, 0 or 1
-        """
-        p = self.page(page)
-        if p is None:
-            return 0
-
-        if round(p.get_aspect_ratio(),2) <= 4.0/3.0 :
-            return 0
-        else :
-            return 1
-
-    def get_mode(self):
+    def has_notes(self):
         """Get the document mode.
 
-        :return: note mode, value 0 or 1
-        :rtype: integer
+        :return: ``True`` if the document has notes, ``False`` otherwise
+        :rtype: boolean
         """
-        return self.note_mode
-
-    def set_mode(self, mode=0):
-        """Set the document mode.
-
-        :param mode: the value of note mode, 0 or 1
-        :type  mode: integer
-        """
-        self.note_mode = mode
+        return self.notes
 
     def page(self, number):
         """Get the specified page.
-        
+
         :param number: number of the page to return
         :type  number: integer
         :return: the wanted page, or ``None`` if it does not exist
@@ -330,7 +318,7 @@ class Document:
         if not number in self.pages_cache:
             self.pages_cache[number] = Page(self.doc, number)
         return self.pages_cache[number]
-    
+
 
     def current_page(self):
         """Get the current page.
@@ -357,7 +345,7 @@ class Document:
         """
         return self.nb_pages
 
-        
+
     def goto(self, number):
         """Switch to another page.
 
@@ -368,7 +356,7 @@ class Document:
             number = 0
         elif number >= self.nb_pages:
             number = self.nb_pages - 1
-            
+
         if number != self.cur_page:
             self.cur_page = number
             self.ui.on_page_change()
