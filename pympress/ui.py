@@ -96,6 +96,10 @@ class UI:
     #: Display mode with notes or not
     disp_mode = 0
 
+    #: To remember digital key
+    s_go_page_num = ""
+    old_event_time = (-sys.maxint)
+
     def __init__(self, doc):
         """
         :param doc: the current document
@@ -211,7 +215,8 @@ class UI:
         bigvbox.pack_end(align)
 
         # "Current slide" frame
-        frame = gtk.Frame("Current slide")
+        #frame = gtk.Frame("Current slide")
+        frame = gtk.Frame("Current notes")
         table.attach(frame, 0, 6, 0, 1)
         align = gtk.Alignment(0.5, 0.5, 1, 1)
         align.set_padding(0, 0, 12, 0)
@@ -240,7 +245,8 @@ class UI:
         self.entry_cur.modify_font(pango.FontDescription('36'))
 
         # "Next slide" frame
-        frame = gtk.Frame("Next slide")
+        #frame = gtk.Frame("Next slide")
+        frame = gtk.Frame("Current slide")
         table.attach(frame, 6, 10, 0, 1)
         align = gtk.Alignment(0.5, 0.5, 1, 1)
         align.set_padding(0, 0, 12, 0)
@@ -352,7 +358,8 @@ class UI:
         :type  unpause: boolean
         """
         page_cur = self.doc.current_page()
-        page_next = self.doc.next_page()
+        #page_next = self.doc.next_page()
+        page_next = self.doc.current_page()
 
         # Aspect ratios
         pr = page_cur.get_aspect_ratio(self.disp_mode)
@@ -405,7 +412,8 @@ class UI:
             page = self.doc.current_page()
         else:
             # Next page: it can be None
-            page = self.doc.next_page()
+            #page = self.doc.next_page()
+            page = self.doc.current_page()
             if page is None:
                 widget.hide_all()
                 widget.parent.set_shadow_type(gtk.SHADOW_NONE)
@@ -482,6 +490,10 @@ class UI:
                 self.reset_timer()
             elif name.upper() == "N":
                 self.switch_mode()
+            elif name.upper() == "G":
+                self.select_page(widget, event, True)
+            elif event.string.isdigit():
+                self.select_page(widget, event)
 
         elif event.type == gtk.gdk.SCROLL:
             if event.direction in [gtk.gdk.SCROLL_RIGHT, gtk.gdk.SCROLL_DOWN]:
@@ -505,7 +517,8 @@ class UI:
 
         # Where did the event occur?
         if widget is self.p_da_next:
-            page = self.doc.next_page()
+            #page = self.doc.next_page()
+            page = self.doc.current_page()
             if page is None:
                 return
         else:
@@ -678,7 +691,8 @@ class UI:
         cur = "%d/%d" % (cur_nb+1, self.doc.pages_number())
         next = "--"
         if cur_nb+2 <= self.doc.pages_number():
-            next = "%d/%d" % (cur_nb+2, self.doc.pages_number())
+            #next = "%d/%d" % (cur_nb+2, self.doc.pages_number())
+            next = "%d/%d" % (cur_nb+1, self.doc.pages_number())
 
         self.label_cur.set_markup(text % cur)
         self.label_next.set_markup(text % next)
@@ -812,7 +826,23 @@ class UI:
 
         self.on_page_change(False)
 
-
+    def select_page(self, widget=None, event=None, go=False):
+        """
+        Capture continuous digital keys that are pressed within 1000
+        milliseconds, and convert the sequence to an integer. Then go to display
+        the corresponding slide page.
+        """
+        if go :
+            if self.s_go_page_num.isdigit() :
+                self.doc.goto(int(self.s_go_page_num)-1)
+            self.s_go_page_num = ""
+        else :
+            diff = event.time - self.old_event_time
+            if diff >= 0 and diff < 1000 :
+                self.s_go_page_num += event.string
+            else :
+                self.s_go_page_num = event.string
+        self.old_event_time = event.time
 
 ##
 # Local Variables:
